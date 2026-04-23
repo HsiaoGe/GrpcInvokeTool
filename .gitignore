@@ -1,0 +1,40 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio files
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+
+# Build logs
+*.log
+
+# NuGet packages
+packages/
+*.nupkg
+
+# Configuration files (generated at runtime)
+history.json
+groups.json
+plans.json
+stress_test/
+
+# Visual Studio cache files
+*.[Cc]ache
+!?*.[Cc]ache/
+
+# Others
+*.bak
+*.tmp

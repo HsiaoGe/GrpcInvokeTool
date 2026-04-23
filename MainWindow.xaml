@@ -1,0 +1,447 @@
+﻿<Window x:Class="GrpcInvokeTool.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:GrpcInvokeTool.ViewModels"
+        xmlns:converters="clr-namespace:GrpcInvokeTool.Converters"
+        xmlns:models="clr-namespace:GrpcInvokeTool.Models"
+        xmlns:hc="https://handyorg.github.io/handycontrol"
+        Title="gRPC Invoke Tool"
+        Width="1400" Height="900"
+        MinWidth="960" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource RegionBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}">
+
+    <Window.Resources>
+        <converters:MethodTypeToColorConverter x:Key="MethodTypeToColorConverter"/>
+        <converters:MethodTypeToTagConverter x:Key="MethodTypeToTagConverter"/>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter"/>
+        <converters:InverseBoolConverter x:Key="InverseBoolConverter"/>
+        <converters:IsErrorToColorConverter x:Key="IsErrorToColorConverter"/>
+
+        <!-- Hierarchical Data Template for Service Tree -->
+        <HierarchicalDataTemplate DataType="{x:Type models:GrpcServiceInfo}" ItemsSource="{Binding Methods}">
+            <StackPanel Orientation="Horizontal" Margin="2,3">
+                <TextBlock Text="📦" FontSize="14" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding ServiceName}" FontWeight="SemiBold" FontSize="13"/>
+            </StackPanel>
+        </HierarchicalDataTemplate>
+
+        <!-- Data Template for Method Items -->
+        <DataTemplate DataType="{x:Type models:GrpcMethodInfo}">
+            <StackPanel Orientation="Horizontal" Margin="2,3">
+                <Border Background="{Binding MethodType, Converter={StaticResource MethodTypeToColorConverter}}"
+                        CornerRadius="4" Padding="5,2" Margin="0,0,8,0">
+                    <TextBlock Text="{Binding MethodTypeTag}" FontSize="10" FontWeight="Bold"
+                               Foreground="White"/>
+                </Border>
+                <TextBlock Text="{Binding MethodName}" FontSize="13"/>
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+
+    <Grid Margin="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top Toolbar -->
+        <Border Grid.Row="0" Background="{DynamicResource PrimaryRegionBrush}" Padding="16,12"
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- DLL Controls -->
+                <StackPanel Orientation="Horizontal" Grid.Column="0">
+                    <Button Content="Load DLL" Style="{StaticResource ButtonPrimary}"
+                            Command="{Binding LoadDllCommand}" Margin="0,0,8,0"/>
+                    <hc:ComboBox ItemsSource="{Binding DllHistory}"
+                                 Text="{Binding DllPath, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEditable="True"
+                                 Width="780" Margin="0,0,8,0"
+                                 ToolTip="Select or enter DLL path"/>
+                    <Button Content="Unload" Style="{StaticResource ButtonDanger}"
+                            Command="{Binding UnloadDllCommand}" Margin="0,0,16,0"
+                            Visibility="{Binding IsDllLoaded, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                </StackPanel>
+
+                <!-- Server Address -->
+                <StackPanel Orientation="Horizontal" Grid.Column="1">
+                    <TextBlock Text="Server:" FontSize="13" Foreground="{DynamicResource SecondaryTextBrush}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <hc:TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}"
+                                Width="200" Style="{StaticResource TextBoxExtend}" Margin="0,0,12,0"/>
+                    <Button Content="⚡ Stress Test" Style="{StaticResource ButtonPrimary}"
+                            Command="{Binding OpenStressTestCommand}" Padding="12,6" FontSize="12"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Content Area -->
+        <Grid Grid.Row="1" Margin="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="240" MinWidth="180"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*" MinWidth="300"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*" MinWidth="300"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Column 0 - Service/Method Tree -->
+            <Border Grid.Column="0" Background="{DynamicResource PrimaryRegionBrush}" Margin="0"
+                    CornerRadius="0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Services &amp; Methods" FontSize="14"
+                               FontWeight="SemiBold" Margin="16,12,0,8"
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    <TreeView ItemsSource="{Binding Services}"
+                              SelectedItemChanged="TreeView_SelectedItemChanged"
+                              Margin="8,0,8,8"
+                              Background="Transparent"/>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                          Background="{DynamicResource RegionBrush}"/>
+
+            <!-- Column 2 - Request Area (Message Editor TreeView) -->
+            <Grid Grid.Column="2" Margin="0,8,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Method Info -->
+                <Border Grid.Row="0" Background="{DynamicResource PrimaryRegionBrush}" CornerRadius="6,6,0,0"
+                        Padding="12,8" Margin="0,0,0,4">
+                    <TextBlock Text="{Binding MethodInfoText}" FontSize="12"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               LineHeight="18"/>
+                </Border>
+
+                <!-- Message Editor TreeView -->
+                <Border Grid.Row="1" Background="{DynamicResource PrimaryRegionBrush}" CornerRadius="6"
+                        Margin="0,0,0,4">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" Margin="10,6,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Request Message" FontSize="11"
+                                       FontWeight="Medium" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                            <Button Grid.Column="2" Content="+" FontWeight="Bold"
+                                    Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                    Style="{StaticResource TreeIconButton}"
+                                    Padding="4,0" Margin="0,0,10,0"
+                                    Click="AddRootFieldButton_Click"
+                                    Visibility="{Binding CanCall, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                        </Grid>
+                        <TreeView x:Name="MessageEditorTree"
+                                  ItemsSource="{Binding RequestRootNode.Children}"
+                                  Margin="4,0,4,4"
+                                  Background="Transparent"
+                                  FontSize="12"
+                                  BorderThickness="0"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <TreeView.ItemContainerStyle>
+                                <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                    <Setter Property="IsExpanded" Value="True"/>
+                                    <Setter Property="Padding" Value="2,1"/>
+                                </Style>
+                            </TreeView.ItemContainerStyle>
+                            <TreeView.Resources>
+                                <!-- Hierarchical template for MessageFieldNode -->
+                                <HierarchicalDataTemplate DataType="{x:Type models:MessageFieldNode}" ItemsSource="{Binding Children}">
+                                    <StackPanel Orientation="Horizontal" Margin="0,2">
+
+                                        <!-- Add field button (+) for Root node only -->
+                                        <Button Content="+" FontWeight="Bold"
+                                                Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="4,0" Margin="0,0,2,0"
+                                                VerticalAlignment="Center"
+                                                Click="AddFieldButton_Click"
+                                                Visibility="{Binding CanAddFields, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+
+                                        <!-- Field Name -->
+                                        <TextBlock Text="{Binding FieldName}" FontSize="12"
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=TreeViewItem}}" Value="True">
+                                                            <Setter Property="Foreground" Value="White"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                            <TextBlock.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Delete Field" Foreground="{DynamicResource DangerBrush}"
+                                                              Click="DeleteFieldMenuItem_Click"
+                                                              CommandParameter="{Binding}"/>
+                                                </ContextMenu>
+                                            </TextBlock.ContextMenu>
+                                        </TextBlock>
+
+                                        <!-- Optional indicator icon (?) -->
+                                        <Border CornerRadius="3" Padding="3,1" Margin="4,0,0,0"
+                                                Background="{DynamicResource WarningBrush}" VerticalAlignment="Center"
+                                                ToolTip="Optional field"
+                                                Visibility="{Binding IsOptional, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="?" FontSize="9" FontWeight="Bold"
+                                                       Foreground="White"/>
+                                        </Border>
+
+                                        <!-- Colon separator -->
+                                        <TextBlock Text=":" FontSize="12"
+                                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                                   VerticalAlignment="Center" Margin="2,0,4,0"/>
+
+                                        <!-- Inline add button for Root node (after colon): add field -->
+                                        <Button Content="+" FontWeight="Bold"
+                                                Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="3,0" Margin="0,0,4,0"
+                                                VerticalAlignment="Center"
+                                                Click="AddFieldButton_Click"
+                                                Visibility="{Binding ShowInlineAddButtonForRoot, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+
+                                        <!-- Inline add button for message fields (after colon): add child field -->
+                                        <Button Content="+" FontWeight="Bold"
+                                                Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="3,0" Margin="0,0,4,0"
+                                                VerticalAlignment="Center"
+                                                Click="AddFieldButton_Click"
+                                                Visibility="{Binding ShowInlineAddButtonForMessage, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+
+                                        <!-- Inline add button for repeated fields (after colon): add repeated item -->
+                                        <Button Content="+" FontWeight="Bold"
+                                                Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="3,0" Margin="0,0,4,0"
+                                                VerticalAlignment="Center"
+                                                Click="AddRepeatedItemButton_Click"
+                                                Visibility="{Binding ShowInlineAddButtonForRepeated, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+
+                                        <!-- Inline add button for map fields (after colon): add map entry -->
+                                        <Button Content="+" FontWeight="Bold"
+                                                Foreground="{DynamicResource PrimaryBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="3,0" Margin="0,0,4,0"
+                                                VerticalAlignment="Center"
+                                                Click="AddRepeatedItemButton_Click"
+                                                Visibility="{Binding ShowInlineAddButtonForMap, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+
+                                        <!-- Type badge -->
+                                        <Border CornerRadius="3" Padding="4,1"
+                                                Background="{DynamicResource SecondaryRegionBrush}" VerticalAlignment="Center" Margin="0,0,6,0">
+                                            <TextBlock Text="{Binding TypeBadge}" FontSize="10"
+                                                       Foreground="{DynamicResource PurpleBrush}"/>
+                                        </Border>
+
+                                        <!-- Enum ComboBox -->
+                                        <hc:ComboBox ItemsSource="{Binding EnumValues}"
+                                                     SelectedItem="{Binding StringValue, UpdateSourceTrigger=PropertyChanged}"
+                                                     FontSize="12" Padding="6,3"
+                                                     MinWidth="80" MaxWidth="200"
+                                                     HorizontalAlignment="Left"
+                                                     Visibility="{Binding IsEnum, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                     SelectionChanged="FieldValue_Changed"
+                                                     Tag="{Binding}"/>
+
+                                        <!-- Bool toggle -->
+                                        <CheckBox IsChecked="{Binding BoolValue}"
+                                                  Content="" FontSize="12"
+                                                  Foreground="{DynamicResource SuccessBrush}"
+                                                  VerticalAlignment="Center"
+                                                  Visibility="{Binding IsBoolValue, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                  Checked="FieldValue_Changed" Unchecked="FieldValue_Changed"
+                                                  Tag="{Binding}"/>
+
+                                        <!-- Scalar TextBox -->
+                                        <hc:TextBox Text="{Binding StringValue, UpdateSourceTrigger=PropertyChanged}"
+                                                    FontSize="12" Padding="4,2"
+                                                    MinWidth="60" MaxWidth="300"
+                                                    HorizontalAlignment="Left"
+                                                    Visibility="{Binding IsEditableValue, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                    TextChanged="FieldValue_Changed"
+                                                    Tag="{Binding}"/>
+
+                                        <!-- Oneof selector -->
+                                        <hc:ComboBox ItemsSource="{Binding AvailableOneofOptions}"
+                                                     SelectedItem="{Binding SelectedOneofField}"
+                                                     FontSize="12" Padding="6,3"
+                                                     MinWidth="80" MaxWidth="200"
+                                                     HorizontalAlignment="Left"
+                                                     Visibility="{Binding ShowOneofSelector, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                     SelectionChanged="OneofSelector_Changed"
+                                                     Tag="{Binding}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding FieldName}" FontSize="12"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </hc:ComboBox>
+
+                                        <!-- Delete button (x) for deletable nodes -->
+                                        <Button Content="x" FontWeight="Bold"
+                                                Foreground="{DynamicResource DangerBrush}" Cursor="Hand"
+                                                Style="{StaticResource TreeIconButton}"
+                                                Padding="4,0" Margin="4,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Click="DeleteFieldButton_Click"
+                                                Visibility="{Binding IsDeletable, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                Tag="{Binding}"/>
+                                    </StackPanel>
+                                </HierarchicalDataTemplate>
+                            </TreeView.Resources>
+                        </TreeView>
+                    </DockPanel>
+                </Border>
+
+                <!-- Action Buttons -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Content="Reset" Style="{StaticResource ButtonDefault}"
+                            Command="{Binding GenerateTemplateCommand}" Margin="0,0,6,0"/>
+                    <Rectangle Width="16"/>
+                    <Button Content="＋ Add to Group" Style="{StaticResource ButtonDefault}"
+                            Command="{Binding AddToGroupCommand}" Margin="0,0,6,0"
+                            Visibility="{Binding CanCall, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                    <Button Content="▶ Invoke" Style="{StaticResource ButtonPrimary}"
+                            Command="{Binding CallCommand}" Margin="0,0,6,0"
+                            IsEnabled="{Binding CanCall}"/>
+                    <Button Content="⏹ Cancel" Style="{StaticResource ButtonDanger}"
+                            Command="{Binding CancelCallCommand}"
+                            Visibility="{Binding IsCalling, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                </StackPanel>
+            </Grid>
+
+            <GridSplitter Grid.Column="3" Width="5" HorizontalAlignment="Stretch"
+                          Background="{DynamicResource RegionBrush}"/>
+
+            <!-- Column 4 - Response Area (Right) -->
+            <Border Grid.Column="4" CornerRadius="0"
+                    Margin="0,8,0,0">
+                <DockPanel>
+                    <!-- Response Header -->
+                    <Grid DockPanel.Dock="Top">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Response" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"
+                                   Margin="12,10,0,0"/>
+                        <Button Grid.Column="1" Content="🗑 Clear" Style="{StaticResource ButtonDefault}"
+                                Command="{Binding ClearResponseCommand}"
+                                Padding="10,4" Margin="0,8,12,0" FontSize="11"/>
+                    </Grid>
+
+                    <!-- Unary Result -->
+                    <hc:TextBox Text="{Binding ResponseText}" Style="{StaticResource CodeEditorTextBox}"
+                                Margin="8,4,8,8"
+                                IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                                VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                Visibility="{Binding IsUnaryResult, Converter={StaticResource BoolToVisibilityConverter}}"/>
+
+                    <!-- Streaming Result -->
+                    <ListView ItemsSource="{Binding StreamMessages}"
+                              Margin="8,4,8,8"
+                              Visibility="{Binding IsStreamingResult, Converter={StaticResource BoolToVisibilityConverter}}"
+                              Background="Transparent"
+                              BorderThickness="0">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="#" Width="50">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding IndexDisplay}" Foreground="{DynamicResource PrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Time" Width="100">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding TimeDisplay}" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Content" Width="800">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                                       Foreground="{Binding IsError, Converter={StaticResource IsErrorToColorConverter}}"/>
+                                        </DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Background="{DynamicResource PrimaryRegionBrush}" Padding="16,6"
+                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusText}" FontSize="12"
+                           Foreground="{DynamicResource SecondaryTextBrush}"/>
+                <StackPanel Orientation="Horizontal" Grid.Column="1">
+                    <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="{DynamicResource SuccessBrush}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCalling}" Value="True">
+                                        <Setter Property="Fill" Value="{DynamicResource WarningBrush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+                    <TextBlock FontSize="12" Foreground="{DynamicResource SecondaryTextBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="Ready"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCalling}" Value="True">
+                                        <Setter Property="Text" Value="Calling..."/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
