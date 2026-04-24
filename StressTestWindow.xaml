@@ -178,6 +178,17 @@
 
                     <TextBlock Text="Interface Calls" FontSize="14" FontWeight="SemiBold" Margin="0,8,0,8"
                                Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    
+                    <!-- Server Address Selection -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Server:" FontSize="12" Foreground="{DynamicResource SecondaryTextBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <hc:ComboBox ItemsSource="{Binding ServerAddressHistory}"
+                                     SelectedItem="{Binding SelectedServerAddress}"
+                                     Width="250" FontSize="12"
+                                     ToolTip="Select server address for all calls"/>
+                    </StackPanel>
+                    
                     <ListView ItemsSource="{Binding SelectedGroup.Calls}" 
                               Background="{DynamicResource PrimaryRegionBrush}"
                               BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}"
@@ -192,17 +203,10 @@
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
-                                <GridViewColumn Header="Method" Width="280">
+                                <GridViewColumn Header="Method" Width="400">
                                     <GridViewColumn.CellTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{Binding DisplayText}" Foreground="{DynamicResource PrimaryTextBrush}"/>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Server" Width="180">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding ServerAddress}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="12"/>
                                         </DataTemplate>
                                     </GridViewColumn.CellTemplate>
                                 </GridViewColumn>
@@ -467,8 +471,12 @@
                         </ListView.View>
                     </ListView>
 
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button Content="▶ Execute Again" Style="{StaticResource ButtonPrimary}"
+                            Command="{Binding ExecuteAgainCommand}" Padding="12,0" Margin="0,0,8,0"/>
                     <Button Content="Delete Report" Style="{StaticResource ButtonDanger}"
-                            Command="{Binding DeleteReportCommand}" Padding="12,0" Margin="0,12,0,0"/>
+                            Command="{Binding DeleteReportCommand}" Padding="12,0"/>
+                </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 

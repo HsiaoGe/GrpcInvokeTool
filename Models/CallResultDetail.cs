@@ -19,7 +19,22 @@ namespace GrpcInvokeTool.Models
 
         public string StatusText => IsSuccess ? "OK" : "Failed";
         public string MethodDisplay => $"{ServiceName}/{MethodName}";
-        public string DurationDisplay => $"{DurationMs:F1}ms";
+        public string DurationDisplay
+        {
+            get
+            {
+                if (DurationMs < 1000)
+                {
+                    // 小于1秒时使用毫秒（整数）
+                    return $"{(int)DurationMs}ms";
+                }
+                else
+                {
+                    // 大于1秒时显示秒（保留三位小数）
+                    return $"{DurationMs / 1000.0:F3}s";
+                }
+            }
+        }
 
         /// <summary>
         /// Summary for display in ListView: error message if failed, truncated response if success

@@ -43,7 +43,44 @@ namespace GrpcInvokeTool.ViewModels
             _history = _historyService.Load();
 
             ServerAddress = _history.ServerAddress;
+            ServerAddressHistory = new ObservableCollection<string>(_history.ServerAddresses);
             DllHistory = new ObservableCollection<string>(_history.DllPaths);
+
+            // 自动加载最近使用的DLL（如果文件还存在）
+            AutoLoadRecentDll();
+        }
+
+        private void AutoLoadRecentDll()
+        {
+            // 尝试加载最近使用的DLL
+            if (_history.DllPaths.Count > 0)
+            {
+                var recentDllPath = _history.DllPaths[0];
+                
+                // 检查文件是否存在
+                if (System.IO.File.Exists(recentDllPath))
+                {
+                    try
+                    {
+                        DllPath = recentDllPath;
+                        DoLoadDll();
+                        StatusText = $"Auto-loaded: {System.IO.Path.GetFileName(recentDllPath)}";
+                    }
+                    catch
+                    {
+                        // 如果自动加载失败，不显示错误，让用户手动加载
+                        StatusText = "Ready - Select a DLL to load";
+                    }
+                }
+                else
+                {
+                    // 文件不存在，从历史记录中移除
+                    _history.DllPaths.Remove(recentDllPath);
+                    _historyService.Save(_history);
+                    DllHistory = new ObservableCollection<string>(_history.DllPaths);
+                    StatusText = "Recent DLL not found - Select a DLL to load";
+                }
+            }
         }
 
         #region DLL Properties
@@ -66,6 +103,14 @@ namespace GrpcInvokeTool.ViewModels
 
         [ObservableProperty]
         private string _serverAddress = "127.0.0.1:50051";
+
+        [ObservableProperty]
+        private ObservableCollection<string> _serverAddressHistory = new();
+
+        partial void OnServerAddressChanged(string value)
+        {
+            // 不在这里保存服务器地址，只有在调用接口时才保存
+        }
 
         #endregion
 
@@ -247,14 +292,6 @@ namespace GrpcInvokeTool.ViewModels
 
             // Build full editor tree with defaults
             BuildEditorTree();
-        }
-
-        partial void OnServerAddressChanged(string value)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                _historyService.UpdateServerAddress(_history, value);
-            }
         }
 
         [RelayCommand]
@@ -569,8 +606,6 @@ namespace GrpcInvokeTool.ViewModels
                         StatusText = "Stream completed";
                         break;
                 }
-
-                SaveCallHistory();
             }
             catch (OperationCanceledException)
             {
@@ -615,6 +650,14 @@ namespace GrpcInvokeTool.ViewModels
             finally
             {
                 IsCalling = false;
+                // 无论成功或失败都保存历史记录
+                SaveCallHistory();
+                // 无论成功或失败都保存服务器地址到历史记录
+                if (!string.IsNullOrWhiteSpace(ServerAddress))
+                {
+                    _historyService.AddServerAddress(_history, ServerAddress);
+                    ServerAddressHistory = new ObservableCollection<string>(_history.ServerAddresses);
+                }
             }
         }
 
@@ -681,7 +724,6 @@ namespace GrpcInvokeTool.ViewModels
 
             var call = new InterfaceCall
             {
-                ServerAddress = ServerAddress,
                 ServiceName = SelectedMethod.ServiceName,
                 MethodName = SelectedMethod.MethodName,
                 MethodType = SelectedMethod.MethodType.ToString(),
@@ -702,26 +744,27 @@ namespace GrpcInvokeTool.ViewModels
             if (dialog.ShowDialog() != true) return;
 
             // Add call to selected or new group directly (without opening stress test window)
-            var groups = persistenceService.LoadGroups();
+            CallGroup? targetGroup = null;
             if (dialog.CreateNewGroup)
             {
-                var newGroup = new CallGroup { Name = $"Group {groups.Count + 1}" };
-                newGroup.Calls.Add(call);
-                newGroup.UpdatedAt = DateTime.Now;
-                groups.Add(newGroup);
+                var groups = persistenceService.LoadGroups();
+                targetGroup = new CallGroup { Name = $"Group {groups.Count + 1}" };
+                targetGroup.Calls.Add(call);
+                targetGroup.UpdatedAt = DateTime.Now;
+                persistenceService.SaveGroup(targetGroup);
             }
             else if (dialog.SelectedGroup != null)
             {
-                var targetGroup = groups.FirstOrDefault(g => g.Id == dialog.SelectedGroup.Id);
+                var groups = persistenceService.LoadGroups();
+                targetGroup = groups.FirstOrDefault(g => g.Id == dialog.SelectedGroup.Id);
                 if (targetGroup == null)
                 {
                     targetGroup = new CallGroup { Name = dialog.SelectedGroup.Name, Id = dialog.SelectedGroup.Id };
-                    groups.Add(targetGroup);
                 }
                 targetGroup.Calls.Add(call);
                 targetGroup.UpdatedAt = DateTime.Now;
+                persistenceService.SaveGroup(targetGroup);
             }
-            persistenceService.SaveGroups(groups);
         }
 
         #endregion

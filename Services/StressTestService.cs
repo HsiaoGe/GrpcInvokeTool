@@ -112,15 +112,17 @@ namespace GrpcInvokeTool.Services
         public async Task<List<CallResultDetail>> ExecuteGroupAsync(
             CallGroup group,
             Assembly assembly,
+            string serverAddress,
             CancellationToken cancellationToken)
         {
             await using var context = new ExecutionContext(_invokeService, assembly);
-            return await ExecuteGroupInternalAsync(group, context, cancellationToken, $"group:{group.Id}");
+            return await ExecuteGroupInternalAsync(group, context, serverAddress, cancellationToken, $"group:{group.Id}");
         }
 
         private async Task<List<CallResultDetail>> ExecuteGroupInternalAsync(
             CallGroup group,
             ExecutionContext context,
+            string serverAddress,
             CancellationToken cancellationToken,
             string reuseScopeKey)
         {
@@ -131,7 +133,7 @@ namespace GrpcInvokeTool.Services
                 var nonDuplexCalls = group.Calls
                     .Select((call, index) => new { call, index })
                     .Where(x => !string.Equals(x.call.MethodType, "DuplexStreaming", StringComparison.OrdinalIgnoreCase))
-                    .Select(x => ExecuteCallAsync(x.call, context, x.index, cancellationToken, reuseScopeKey))
+                    .Select(x => ExecuteCallAsync(x.call, context, serverAddress, x.index, cancellationToken, reuseScopeKey))
                     .ToList();
 
                 if (nonDuplexCalls.Count > 0)
@@ -148,7 +150,7 @@ namespace GrpcInvokeTool.Services
                 foreach (var item in duplexCalls)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteCallAsync(item.call, context, item.index, cancellationToken, reuseScopeKey);
+                    var result = await ExecuteCallAsync(item.call, context, serverAddress, item.index, cancellationToken, reuseScopeKey);
                     results.Add(result);
                 }
             }
@@ -157,7 +159,7 @@ namespace GrpcInvokeTool.Services
                 for (int i = 0; i < group.Calls.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = await ExecuteCallAsync(group.Calls[i], context, i, cancellationToken, reuseScopeKey);
+                    var result = await ExecuteCallAsync(group.Calls[i], context, serverAddress, i, cancellationToken, reuseScopeKey);
                     results.Add(result);
                 }
             }
@@ -169,6 +171,7 @@ namespace GrpcInvokeTool.Services
             StressTestPlan plan,
             IReadOnlyList<CallGroup> groups,
             Assembly assembly,
+            string serverAddress,
             IProgress<StressTestProgress>? progress,
             CancellationToken cancellationToken)
         {
@@ -202,6 +205,9 @@ namespace GrpcInvokeTool.Services
 
             await using var context = new ExecutionContext(_invokeService, assembly);
 
+            // 记录上一个group的服务器地址，用于判断是否需要复用channel
+            string? lastGroupServerAddress = null;
+
             try
             {
                 for (int loop = 0; loop < totalLoops; loop++)
@@ -225,7 +231,18 @@ namespace GrpcInvokeTool.Services
                             TotalLoops = plan.LoopCount == 0 ? 0 : totalLoops,
                         });
 
-                        var stepResults = await ExecuteGroupInternalAsync(group, context, cancellationToken, $"plan:{plan.Id}");
+                        // 判断服务器地址是否相同，决定是否复用channel和双向流session
+                        // 如果服务器地址相同，使用相同的reuseScopeKey，可以复用channel和session
+                        // 如果服务器地址不同，使用不同的reuseScopeKey，不复用
+                        var currentServerAddress = serverAddress;
+                        var reuseScopeKey = string.Equals(lastGroupServerAddress, currentServerAddress, StringComparison.OrdinalIgnoreCase)
+                            ? $"plan:{plan.Id}"  // 相同服务器，复用
+                            : $"plan:{plan.Id}|step:{stepIdx}";  // 不同服务器，不复用
+
+                        var stepResults = await ExecuteGroupInternalAsync(group, context, currentServerAddress, cancellationToken, reuseScopeKey);
+
+                        // 记录当前服务器地址
+                        lastGroupServerAddress = currentServerAddress;
 
                         foreach (var r in stepResults)
                         {
@@ -308,6 +325,7 @@ namespace GrpcInvokeTool.Services
         private async Task<CallResultDetail> ExecuteCallAsync(
             InterfaceCall call,
             ExecutionContext context,
+            string serverAddress,
             int index,
             CancellationToken cancellationToken,
             string reuseScopeKey)
@@ -317,7 +335,7 @@ namespace GrpcInvokeTool.Services
                 Index = index,
                 ServiceName = call.ServiceName,
                 MethodName = call.MethodName,
-                ServerAddress = call.ServerAddress,
+                ServerAddress = serverAddress, // 使用传入的服务器地址
                 StartTime = DateTime.Now,
             };
 
@@ -357,7 +375,7 @@ namespace GrpcInvokeTool.Services
                 switch (methodInfo.MethodType)
                 {
                     case MethodType.Unary:
-                        var responseJson = await _invokeService.InvokeUnaryAsync(methodInfo, request!, call.ServerAddress);
+                        var responseJson = await _invokeService.InvokeUnaryAsync(methodInfo, request!, serverAddress);
                         result.IsSuccess = true;
                         result.StatusCode = "OK";
                         result.ResponseJson = responseJson;
@@ -366,7 +384,7 @@ namespace GrpcInvokeTool.Services
                     case MethodType.ServerStreaming:
                         var sb = new System.Text.StringBuilder();
                         int ssIndex = 0;
-                        await foreach (var item in _invokeService.InvokeServerStreamingAsync(methodInfo, request!, call.ServerAddress, cancellationToken))
+                        await foreach (var item in _invokeService.InvokeServerStreamingAsync(methodInfo, request!, serverAddress, cancellationToken))
                         {
                             ssIndex++;
                             if (ssIndex <= 10) // Collect first 10 responses
@@ -395,7 +413,7 @@ namespace GrpcInvokeTool.Services
                             break;
                         }
 
-                        var session = await context.GetOrCreateDuplexSessionAsync(methodInfo, call.ServerAddress, reuseScopeKey, cancellationToken);
+                        var session = await context.GetOrCreateDuplexSessionAsync(methodInfo, serverAddress, reuseScopeKey, cancellationToken);
                         await session.SendAsync(request, cancellationToken);
                         result.IsSuccess = true;
                         result.StatusCode = "OK";

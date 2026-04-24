@@ -18,6 +18,8 @@ namespace GrpcInvokeTool.ViewModels
         private readonly StressTestPersistenceService _persistenceService;
         private readonly GrpcInvokeService _invokeService;
         private readonly DllLoadService _dllLoadService;
+        private readonly HistoryService _historyService;
+        private HistoryData _history;
 
         private CancellationTokenSource? _executionCts;
 
@@ -31,6 +33,15 @@ namespace GrpcInvokeTool.ViewModels
             _persistenceService = persistenceService;
             _invokeService = invokeService;
             _dllLoadService = dllLoadService;
+            _historyService = new HistoryService();
+
+            _history = _historyService.Load();
+            ServerAddressHistory = new ObservableCollection<string>(_history.ServerAddresses);
+            // 默认选择最近使用的服务器地址
+            if (_history.ServerAddresses.Count > 0)
+            {
+                SelectedServerAddress = _history.ServerAddresses[0];
+            }
 
             LoadData();
         }
@@ -45,6 +56,12 @@ namespace GrpcInvokeTool.ViewModels
 
         [ObservableProperty]
         private ObservableCollection<StressTestReport> _reports = new();
+
+        [ObservableProperty]
+        private ObservableCollection<string> _serverAddressHistory = new();
+
+        [ObservableProperty]
+        private string _selectedServerAddress = "127.0.0.1:50051";
 
         [ObservableProperty]
         private int _selectedTab; // 0=Groups, 1=Plans, 2=Reports
@@ -164,7 +181,7 @@ namespace GrpcInvokeTool.ViewModels
         {
             var group = new CallGroup { Name = $"Group {Groups.Count + 1}" };
             Groups.Add(group);
-            SaveGroups();
+            _persistenceService.SaveGroup(group);
             SelectedGroup = group;
         }
 
@@ -172,8 +189,8 @@ namespace GrpcInvokeTool.ViewModels
         private void DeleteGroup()
         {
             if (SelectedGroup == null) return;
+            _persistenceService.DeleteGroup(SelectedGroup.Id);
             Groups.Remove(SelectedGroup);
-            SaveGroups();
             SelectedGroup = Groups.FirstOrDefault();
         }
 
@@ -182,7 +199,7 @@ namespace GrpcInvokeTool.ViewModels
         {
             if (SelectedGroup == null) return;
             SelectedGroup.UpdatedAt = DateTime.Now;
-            SaveGroups();
+            _persistenceService.SaveGroup(SelectedGroup);
         }
 
         [RelayCommand]
@@ -192,7 +209,7 @@ namespace GrpcInvokeTool.ViewModels
             SelectedGroup.IsParallel = !SelectedGroup.IsParallel;
             SelectedGroup.UpdatedAt = DateTime.Now;
             OnPropertyChanged(nameof(SelectedGroup));
-            SaveGroups();
+            _persistenceService.SaveGroup(SelectedGroup);
         }
 
         [RelayCommand]
@@ -201,7 +218,7 @@ namespace GrpcInvokeTool.ViewModels
             if (SelectedGroup == null || call == null) return;
             SelectedGroup.Calls.Remove(call);
             SelectedGroup.UpdatedAt = DateTime.Now;
-            SaveGroups();
+            _persistenceService.SaveGroup(SelectedGroup);
         }
 
         [RelayCommand]
@@ -212,7 +229,7 @@ namespace GrpcInvokeTool.ViewModels
             if (idx <= 0) return;
             SelectedGroup.Calls.Move(idx, idx - 1);
             SelectedGroup.UpdatedAt = DateTime.Now;
-            SaveGroups();
+            _persistenceService.SaveGroup(SelectedGroup);
         }
 
         [RelayCommand]
@@ -223,7 +240,7 @@ namespace GrpcInvokeTool.ViewModels
             if (idx < 0 || idx >= SelectedGroup.Calls.Count - 1) return;
             SelectedGroup.Calls.Move(idx, idx + 1);
             SelectedGroup.UpdatedAt = DateTime.Now;
-            SaveGroups();
+            _persistenceService.SaveGroup(SelectedGroup);
         }
 
         /// <summary>
@@ -252,7 +269,7 @@ namespace GrpcInvokeTool.ViewModels
 
             targetGroup.Calls.Add(call);
             targetGroup.UpdatedAt = DateTime.Now;
-            SaveGroups();
+            _persistenceService.SaveGroup(targetGroup);
             SelectedGroup = targetGroup;
         }
 
@@ -271,13 +288,14 @@ namespace GrpcInvokeTool.ViewModels
             try
             {
                 var results = await _stressTestService.ExecuteGroupAsync(
-                    SelectedGroup, _dllLoadService.LoadedAssembly, ct);
+                    SelectedGroup, _dllLoadService.LoadedAssembly, SelectedServerAddress, ct);
 
                 stopwatch.Stop();
 
                 var report = new StressTestReport
                 {
                     PlanName = $"Group: {SelectedGroup.Name}",
+                    GroupId = SelectedGroup.Id, // 记录Group ID以便重新执行
                     Status = "Completed",
                     ExecutedAt = DateTime.Now,
                     TotalDuration = stopwatch.Elapsed,
@@ -320,7 +338,7 @@ namespace GrpcInvokeTool.ViewModels
         {
             var plan = new StressTestPlan { Name = $"Plan {Plans.Count + 1}" };
             Plans.Add(plan);
-            SavePlans();
+            _persistenceService.SavePlan(plan);
             SelectedPlan = plan;
         }
 
@@ -328,8 +346,8 @@ namespace GrpcInvokeTool.ViewModels
         private void DeletePlan()
         {
             if (SelectedPlan == null) return;
+            _persistenceService.DeletePlan(SelectedPlan.Id);
             Plans.Remove(SelectedPlan);
-            SavePlans();
             SelectedPlan = Plans.FirstOrDefault();
         }
 
@@ -338,7 +356,7 @@ namespace GrpcInvokeTool.ViewModels
         {
             if (SelectedPlan == null) return;
             SelectedPlan.UpdatedAt = DateTime.Now;
-            SavePlans();
+            _persistenceService.SavePlan(SelectedPlan);
         }
 
         [RelayCommand]
@@ -363,7 +381,7 @@ namespace GrpcInvokeTool.ViewModels
             };
             SelectedPlan.Steps.Add(step);
             SelectedPlan.UpdatedAt = DateTime.Now;
-            SavePlans();
+            _persistenceService.SavePlan(SelectedPlan);
         }
 
         [RelayCommand]
@@ -372,7 +390,7 @@ namespace GrpcInvokeTool.ViewModels
             if (SelectedPlan == null || step == null) return;
             SelectedPlan.Steps.Remove(step);
             SelectedPlan.UpdatedAt = DateTime.Now;
-            SavePlans();
+            _persistenceService.SavePlan(SelectedPlan);
         }
 
         [RelayCommand]
@@ -383,7 +401,7 @@ namespace GrpcInvokeTool.ViewModels
             if (idx <= 0) return;
             SelectedPlan.Steps.Move(idx, idx - 1);
             SelectedPlan.UpdatedAt = DateTime.Now;
-            SavePlans();
+            _persistenceService.SavePlan(SelectedPlan);
         }
 
         [RelayCommand]
@@ -394,7 +412,7 @@ namespace GrpcInvokeTool.ViewModels
             if (idx < 0 || idx >= SelectedPlan.Steps.Count - 1) return;
             SelectedPlan.Steps.Move(idx, idx + 1);
             SelectedPlan.UpdatedAt = DateTime.Now;
-            SavePlans();
+            _persistenceService.SavePlan(SelectedPlan);
         }
 
         [RelayCommand]
@@ -426,6 +444,7 @@ namespace GrpcInvokeTool.ViewModels
                     SelectedPlan,
                     Groups.ToList(),
                     _dllLoadService.LoadedAssembly,
+                    SelectedServerAddress,
                     progress,
                     ct);
 
@@ -459,6 +478,52 @@ namespace GrpcInvokeTool.ViewModels
             _persistenceService.DeleteReport(SelectedReport.Id);
             Reports.Remove(SelectedReport);
             SelectedReport = Reports.FirstOrDefault();
+        }
+
+        [RelayCommand]
+        private async Task ExecuteAgainAsync()
+        {
+            if (SelectedReport == null || IsExecuting) return;
+            if (_dllLoadService.LoadedAssembly == null)
+            {
+                MessageBox.Show("Please load a DLL first.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // 判断是从Plan还是Group执行的
+            if (!string.IsNullOrEmpty(SelectedReport.GroupId))
+            {
+                // 从Group执行的
+                var group = Groups.FirstOrDefault(g => g.Id == SelectedReport.GroupId);
+                if (group == null)
+                {
+                    MessageBox.Show($"Group '{SelectedReport.PlanName}' not found. It may have been deleted.", 
+                        "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                SelectedGroup = group;
+                SelectedTab = 0; // 切换到Groups标签页
+                await ExecuteGroupAsync();
+            }
+            else if (!string.IsNullOrEmpty(SelectedReport.PlanId))
+            {
+                // 从Plan执行的
+                var plan = Plans.FirstOrDefault(p => p.Id == SelectedReport.PlanId);
+                if (plan == null)
+                {
+                    MessageBox.Show($"Plan '{SelectedReport.PlanName}' not found. It may have been deleted.", 
+                        "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                SelectedPlan = plan;
+                SelectedTab = 1; // 切换到Plans标签页
+                await ExecutePlanAsync();
+            }
+            else
+            {
+                MessageBox.Show("Cannot re-execute this report. Source plan/group information is missing.", 
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         #endregion
@@ -496,14 +561,29 @@ namespace GrpcInvokeTool.ViewModels
             _executionCts = null;
         }
 
-        public void SaveGroups()
+        /// <summary>
+        /// 保存单个group（用于UI事件处理）
+        /// </summary>
+        public void SaveCurrentGroup()
         {
-            _persistenceService.SaveGroups(Groups.ToList());
+            if (SelectedGroup != null)
+            {
+                SelectedGroup.UpdatedAt = DateTime.Now;
+                SelectedGroup.ServerAddress = SelectedServerAddress; // 记录最近使用的服务器地址
+                _persistenceService.SaveGroup(SelectedGroup);
+            }
         }
 
-        public void SavePlans()
+        /// <summary>
+        /// 保存单个plan（用于UI事件处理）
+        /// </summary>
+        public void SaveCurrentPlan()
         {
-            _persistenceService.SavePlans(Plans.ToList());
+            if (SelectedPlan != null)
+            {
+                SelectedPlan.UpdatedAt = DateTime.Now;
+                _persistenceService.SavePlan(SelectedPlan);
+            }
         }
 
         #endregion

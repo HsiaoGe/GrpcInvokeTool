@@ -104,29 +104,17 @@ namespace GrpcInvokeTool
 
         private void GroupName_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (ViewModel?.SelectedGroup != null)
-            {
-                ViewModel.SelectedGroup.UpdatedAt = DateTime.Now;
-                ViewModel.SaveGroups();
-            }
+            ViewModel?.SaveCurrentGroup();
         }
 
         private void ParallelCheckBox_Changed(object sender, RoutedEventArgs e)
         {
-            if (ViewModel?.SelectedGroup != null)
-            {
-                ViewModel.SelectedGroup.UpdatedAt = DateTime.Now;
-                ViewModel.SaveGroups();
-            }
+            ViewModel?.SaveCurrentGroup();
         }
 
         private void PlanName_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (ViewModel?.SelectedPlan != null)
-            {
-                ViewModel.SelectedPlan.UpdatedAt = DateTime.Now;
-                ViewModel.SavePlans();
-            }
+            ViewModel?.SaveCurrentPlan();
         }
 
         #endregion
@@ -166,7 +154,7 @@ namespace GrpcInvokeTool
 
             // Show detail dialog
             var title = $"Call Details: {call.DisplayText}";
-            var infoContent = $"Server: {call.ServerAddress}\nService: {call.ServiceName}\nMethod: {call.MethodName}\nType: {call.MethodType}";
+            var infoContent = $"Service: {call.ServiceName}\nMethod: {call.MethodName}\nType: {call.MethodType}";
             var jsonContent = string.IsNullOrWhiteSpace(call.RequestJson) ? "(no request data)" : call.RequestJson;
 
             var dialog = new DetailDialog(title, infoContent, jsonContent)

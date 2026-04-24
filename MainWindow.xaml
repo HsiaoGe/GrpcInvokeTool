@@ -79,8 +79,11 @@
                 <StackPanel Orientation="Horizontal" Grid.Column="1">
                     <TextBlock Text="Server:" FontSize="13" Foreground="{DynamicResource SecondaryTextBrush}"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <hc:TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}"
-                                Width="200" Style="{StaticResource TextBoxExtend}" Margin="0,0,12,0"/>
+                    <hc:ComboBox ItemsSource="{Binding ServerAddressHistory}"
+                                 Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEditable="True"
+                                 Width="200" Margin="0,0,12,0"
+                                 ToolTip="Select or enter server address"/>
                     <Button Content="⚡ Stress Test" Style="{StaticResource ButtonPrimary}"
                             Command="{Binding OpenStressTestCommand}" Padding="12,6" FontSize="12"/>
                 </StackPanel>

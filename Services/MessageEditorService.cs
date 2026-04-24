@@ -86,25 +86,196 @@ namespace GrpcInvokeTool.Services
 
         /// <summary>
         /// Build editor tree from existing JSON (history restore).
+        /// 从空树开始，根据JSON内容动态添加字段，正确还原用户删除的字段。
         /// </summary>
         public MessageFieldNode BuildEditorTreeFromJson(MessageDescriptor descriptor, string json)
         {
-            var root = BuildFullEditorTree(descriptor);
+            // 使用空树而不是完整树，这样JSON中没有的字段就不会被添加
+            var root = BuildEditorTree(descriptor);
 
             try
             {
                 using var doc = JsonDocument.Parse(json);
                 if (doc.RootElement.ValueKind == JsonValueKind.Object)
                 {
-                    ApplyJsonToNode(root, doc.RootElement);
+                    ApplyJsonToNodeFromEmpty(root, doc.RootElement, descriptor);
                 }
             }
             catch
             {
                 // If parsing fails, return the default full tree
+                return BuildFullEditorTree(descriptor);
             }
 
             return root;
+        }
+
+        /// <summary>
+        /// 从空树开始应用JSON，动态添加字段
+        /// </summary>
+        private void ApplyJsonToNodeFromEmpty(MessageFieldNode node, JsonElement element, MessageDescriptor? descriptor = null)
+        {
+            if (element.ValueKind != JsonValueKind.Object) return;
+
+            var targetDescriptor = descriptor ?? node.MessageDescriptor;
+            if (targetDescriptor == null) return;
+
+            var processedOneofs = new HashSet<OneofDescriptor>();
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                // 查找字段描述符
+                var field = targetDescriptor.Fields.InFieldNumberOrder()
+                    .FirstOrDefault(f => f.Name == prop.Name);
+
+                if (field == null) continue;
+
+                // 处理synthetic oneof (proto3 optional)
+                if (field.ContainingOneof != null && IsSyntheticOneof(field.ContainingOneof))
+                {
+                    var fieldNode = CreateFieldNode(field);
+                    fieldNode.IsOptional = true;
+                    fieldNode.IsSyntheticOneof = true;
+                    fieldNode.IsActive = true;
+                    ApplyScalarOrMessageValue(fieldNode, prop.Value);
+                    node.Children.Add(fieldNode);
+                    fieldNode.Parent = node;
+                    continue;
+                }
+
+                // 处理真正的oneof
+                if (field.ContainingOneof != null && !IsSyntheticOneof(field.ContainingOneof))
+                {
+                    if (processedOneofs.Contains(field.ContainingOneof)) continue;
+                    processedOneofs.Add(field.ContainingOneof);
+
+                    // 检查是否已经存在同名的oneof组
+                    var existingOneof = node.Children.FirstOrDefault(c => 
+                        c.IsOneofGroup && c.OneofDescriptor == field.ContainingOneof);
+                    
+                    if (existingOneof != null)
+                    {
+                        // 已存在，更新选中的选项
+                        var selectedOption_oneof = existingOneof.OneofOptions.FirstOrDefault(o => o.FieldName == prop.Name);
+                        if (selectedOption_oneof != null)
+                        {
+                            existingOneof.SelectedOneofField = selectedOption_oneof;
+                            existingOneof.Children.Clear();
+                            // 不调用AddChildWithDefaults，直接创建空节点并应用JSON
+                            var optionNode = CreateFieldNode(selectedOption_oneof.FieldDescriptor!);
+                            optionNode.IsActive = true;
+                            existingOneof.Children.Add(optionNode);
+                            optionNode.Parent = existingOneof;
+                            ApplyScalarOrMessageValue(optionNode, prop.Value);
+                        }
+                        continue;
+                    }
+
+                    // 创建oneof组节点
+                    var oneofNode = CreateOneofGroupNode(field.ContainingOneof);
+                    
+                    // 找到JSON中实际存在的oneof选项
+                    var selectedOption = oneofNode.OneofOptions.FirstOrDefault(o => o.FieldName == prop.Name);
+                    if (selectedOption != null)
+                    {
+                        oneofNode.SelectedOneofField = selectedOption;
+                        oneofNode.Children.Clear();
+                        // 不调用AddChildWithDefaults，直接创建空节点并应用JSON
+                        var optionNode = CreateFieldNode(selectedOption.FieldDescriptor!);
+                        optionNode.IsActive = true;
+                        oneofNode.Children.Add(optionNode);
+                        optionNode.Parent = oneofNode;
+                        ApplyScalarOrMessageValue(optionNode, prop.Value);
+                    }
+                    
+                    node.Children.Add(oneofNode);
+                    oneofNode.Parent = node;
+                    continue;
+                }
+
+                // 处理普通字段
+                // 检查是否已经存在同名的字段
+                var existingField = node.Children.FirstOrDefault(c => c.FieldName == prop.Name);
+                if (existingField != null)
+                {
+                    // 已存在，更新值
+                    ApplyScalarOrMessageValue(existingField, prop.Value);
+                    continue;
+                }
+
+                var childNode = CreateFieldNode(field);
+                childNode.IsActive = true;
+                
+                // 处理map
+                if (field.IsMap)
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        int idx = 0;
+                        foreach (var entry in prop.Value.EnumerateObject())
+                        {
+                            var mapEntry = CreateMapEntryNode(field, entry.Name, idx++);
+                            var valueNode = mapEntry.Children.FirstOrDefault(c => c.FieldName == "value");
+                            if (valueNode != null)
+                            {
+                                ApplyScalarOrMessageValue(valueNode, entry.Value);
+                            }
+                            childNode.Children.Add(mapEntry);
+                            mapEntry.Parent = childNode;
+                        }
+                    }
+                }
+                // 处理repeated
+                else if (field.IsRepeated)
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        int idx = 0;
+                        foreach (var item in prop.Value.EnumerateArray())
+                        {
+                            var repeatedItem = CreateRepeatedItemNode(field, idx++);
+                            ApplyScalarOrMessageValue(repeatedItem, item);
+                            childNode.Children.Add(repeatedItem);
+                            repeatedItem.Parent = childNode;
+                        }
+                    }
+                }
+                // 处理message
+                else if (field.FieldType == FieldType.Message)
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Object)
+                    {
+                        ApplyJsonToNodeFromEmpty(childNode, prop.Value, field.MessageType);
+                    }
+                }
+                // 处理enum和scalar
+                else
+                {
+                    ApplyScalarOrMessageValue(childNode, prop.Value);
+                }
+
+                node.Children.Add(childNode);
+                childNode.Parent = node;
+            }
+        }
+
+        /// <summary>
+        /// 应用scalar或message值到节点
+        /// </summary>
+        private void ApplyScalarOrMessageValue(MessageFieldNode node, JsonElement element)
+        {
+            if (node.IsMessage && element.ValueKind == JsonValueKind.Object)
+            {
+                ApplyJsonToNodeFromEmpty(node, element, node.FieldDescriptor?.MessageType);
+            }
+            else if (node.IsEnum)
+            {
+                node.StringValue = element.ToString();
+            }
+            else
+            {
+                ApplyScalarValue(node, element);
+            }
         }
 
         private void ApplyJsonToNode(MessageFieldNode node, JsonElement element)
