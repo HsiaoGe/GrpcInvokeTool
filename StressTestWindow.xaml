@@ -9,6 +9,7 @@
         Width="1200" Height="750"
         MinWidth="900" MinHeight="550"
         WindowStartupLocation="CenterOwner"
+        Icon="pack://application:,,,/icon.ico"
         Background="{DynamicResource RegionBrush}"
         Foreground="{DynamicResource PrimaryTextBrush}">
 
