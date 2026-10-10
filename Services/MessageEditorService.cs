@@ -96,10 +96,7 @@ namespace GrpcInvokeTool.Services
             try
             {
                 using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.ValueKind == JsonValueKind.Object)
-                {
-                    ApplyJsonToNodeFromEmpty(root, doc.RootElement, descriptor);
-                }
+                ApplyJsonToNodeFromEmpty(root, doc.RootElement, descriptor);
             }
             catch
             {
@@ -115,10 +112,11 @@ namespace GrpcInvokeTool.Services
         /// </summary>
         private void ApplyJsonToNodeFromEmpty(MessageFieldNode node, JsonElement element, MessageDescriptor? descriptor = null)
         {
-            if (element.ValueKind != JsonValueKind.Object) return;
-
             var targetDescriptor = descriptor ?? node.MessageDescriptor;
             if (targetDescriptor == null) return;
+
+            element = ExpandWellKnownJson(element, targetDescriptor);
+            if (element.ValueKind != JsonValueKind.Object) return;
 
             var processedOneofs = new HashSet<OneofDescriptor>();
 
@@ -243,10 +241,7 @@ namespace GrpcInvokeTool.Services
                 // 处理message
                 else if (field.FieldType == FieldType.Message)
                 {
-                    if (prop.Value.ValueKind == JsonValueKind.Object)
-                    {
-                        ApplyJsonToNodeFromEmpty(childNode, prop.Value, field.MessageType);
-                    }
+                    ApplyScalarOrMessageValue(childNode, prop.Value);
                 }
                 // 处理enum和scalar
                 else
@@ -264,7 +259,7 @@ namespace GrpcInvokeTool.Services
         /// </summary>
         private void ApplyScalarOrMessageValue(MessageFieldNode node, JsonElement element)
         {
-            if (node.IsMessage && element.ValueKind == JsonValueKind.Object)
+            if (node.IsMessage)
             {
                 ApplyJsonToNodeFromEmpty(node, element, node.FieldDescriptor?.MessageType);
             }
@@ -276,6 +271,45 @@ namespace GrpcInvokeTool.Services
             {
                 ApplyScalarValue(node, element);
             }
+        }
+
+        private static JsonElement ExpandWellKnownJson(JsonElement element, MessageDescriptor descriptor)
+        {
+            // The editor uses descriptor fields; ProtoJSON uses plain objects, arrays and values.
+            string fieldName;
+            switch (descriptor.FullName)
+            {
+                case "google.protobuf.Struct":
+                    fieldName = "fields";
+                    break;
+                case "google.protobuf.ListValue":
+                    fieldName = "values";
+                    break;
+                case "google.protobuf.Value":
+                    fieldName = element.ValueKind switch
+                    {
+                        JsonValueKind.Null => "null_value",
+                        JsonValueKind.Number => "number_value",
+                        JsonValueKind.String => "string_value",
+                        JsonValueKind.True or JsonValueKind.False => "bool_value",
+                        JsonValueKind.Object => "struct_value",
+                        JsonValueKind.Array => "list_value",
+                        _ => throw new InvalidOperationException("Unsupported JSON value.")
+                    };
+                    if (element.ValueKind == JsonValueKind.Null)
+                        return JsonSerializer.SerializeToElement(new Dictionary<string, object>
+                        {
+                            [fieldName] = "NULL_VALUE"
+                        });
+                    break;
+                default:
+                    return element;
+            }
+
+            return JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement>
+            {
+                [fieldName] = element
+            });
         }
 
         private void ApplyJsonToNode(MessageFieldNode node, JsonElement element)
@@ -447,7 +481,23 @@ namespace GrpcInvokeTool.Services
         {
             if (node.Kind == FieldNodeKind.Root || (node.IsMessage && !node.IsRepeated && !node.IsMap))
             {
-                var dict = new Dictionary<string, object>();
+                switch (node.MessageDescriptor?.FullName)
+                {
+                    case "google.protobuf.Struct":
+                        var fields = node.Children.FirstOrDefault(c => c.IsActive && c.FieldName == "fields");
+                        return fields == null ? new Dictionary<string, object?>() : MapToDict(fields);
+                    case "google.protobuf.ListValue":
+                        var values = node.Children.FirstOrDefault(c => c.IsActive && c.FieldName == "values");
+                        return values == null ? new List<object?>() : RepeatedToList(values);
+                    case "google.protobuf.Value":
+                        var kind = node.Children.FirstOrDefault(c => c.IsActive && c.IsOneofGroup);
+                        var value = kind?.Children.FirstOrDefault(c =>
+                            c.IsActive && c.FieldName == kind.SelectedOneofField?.FieldName);
+                        if (value == null || value.FieldName == "null_value") return null;
+                        return value.IsMessage ? NodeToDict(value) : ConvertScalarValue(value);
+                }
+
+                var dict = new Dictionary<string, object?>();
                 foreach (var child in node.Children)
                 {
                     if (!child.IsActive) continue;
@@ -459,11 +509,11 @@ namespace GrpcInvokeTool.Services
                         {
                             // Find the active oneof child in Children
                             var activeOneofChild = child.Children.FirstOrDefault(c => c.FieldName == selectedOption.FieldName);
-                            if (activeOneofChild != null)
+                            if (activeOneofChild != null && activeOneofChild.IsActive)
                             {
                                 if (activeOneofChild.IsMessage)
                                 {
-                                    dict[activeOneofChild.FieldName] = NodeToDict(activeOneofChild) ?? new Dictionary<string, object>();
+                                    dict[activeOneofChild.FieldName] = NodeToDict(activeOneofChild);
                                 }
                                 else if (activeOneofChild.IsEnum)
                                 {
@@ -478,53 +528,15 @@ namespace GrpcInvokeTool.Services
                     }
                     else if (child.IsMap)
                     {
-                        var mapDict = new Dictionary<string, object>();
-                        foreach (var entry in child.Children.OfType<MessageFieldNode>())
-                        {
-                            var keyNode = entry.Children.FirstOrDefault(c => c.FieldName == "key");
-                            var valueNode = entry.Children.FirstOrDefault(c => c.FieldName == "value");
-                            if (keyNode != null && valueNode != null)
-                            {
-                                var key = keyNode.StringValue;
-                                if (valueNode.IsMessage)
-                                {
-                                    mapDict[key] = NodeToDict(valueNode) ?? new Dictionary<string, object>();
-                                }
-                                else if (valueNode.IsEnum)
-                                {
-                                    mapDict[key] = valueNode.StringValue;
-                                }
-                                else
-                                {
-                                    mapDict[key] = ConvertScalarValue(valueNode);
-                                }
-                            }
-                        }
-                        dict[child.FieldName] = mapDict;
+                        dict[child.FieldName] = MapToDict(child);
                     }
                     else if (child.IsRepeated && !child.IsMap)
                     {
-                        var list = new List<object>();
-                        foreach (var item in child.Children)
-                        {
-                            if (child.IsMessage)
-                            {
-                                list.Add(NodeToDict(item) ?? new Dictionary<string, object>());
-                            }
-                            else if (child.IsEnum)
-                            {
-                                list.Add(item.StringValue);
-                            }
-                            else
-                            {
-                                list.Add(ConvertScalarValue(item));
-                            }
-                        }
-                        dict[child.FieldName] = list;
+                        dict[child.FieldName] = RepeatedToList(child);
                     }
                     else if (child.IsMessage)
                     {
-                        dict[child.FieldName] = NodeToDict(child) ?? new Dictionary<string, object>();
+                        dict[child.FieldName] = NodeToDict(child);
                     }
                     else if (child.IsEnum)
                     {
@@ -538,6 +550,28 @@ namespace GrpcInvokeTool.Services
                 return dict;
             }
             return null;
+        }
+
+        private Dictionary<string, object?> MapToDict(MessageFieldNode node)
+        {
+            var dict = new Dictionary<string, object?>();
+            foreach (var entry in node.Children.Where(c => c.IsActive))
+            {
+                var key = entry.Children.FirstOrDefault(c => c.IsActive && c.FieldName == "key");
+                var value = entry.Children.FirstOrDefault(c => c.IsActive && c.FieldName == "value");
+                if (key == null || value == null) continue;
+                dict[key.StringValue] = value.IsMessage ? NodeToDict(value)
+                    : value.IsEnum ? value.StringValue : ConvertScalarValue(value);
+            }
+            return dict;
+        }
+
+        private List<object?> RepeatedToList(MessageFieldNode node)
+        {
+            return node.Children.Where(c => c.IsActive)
+                .Select(item => item.IsMessage ? NodeToDict(item)
+                    : item.IsEnum ? item.StringValue : ConvertScalarValue(item))
+                .ToList();
         }
 
         private object ConvertScalarValue(MessageFieldNode node)
